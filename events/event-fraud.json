@@ -1,0 +1,7 @@
+{
+  "transactionId": "TX-10001",
+  "amount": 1200,
+  "currency": "USD",
+  "merchantCategory": "RETAIL",
+  "channel": "CARD_PRESENT"
+}

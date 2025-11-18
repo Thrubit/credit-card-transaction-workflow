@@ -1,0 +1,16 @@
+{
+  "validation": {
+    "Payload": {
+      "isValid": true,
+      "originalTransaction": {
+        "transactionId": "TX-10001",
+        "amount": 1200,
+        "currency": "USD",
+        "cardNumber": "4111",
+        "merchantId": "M-98765",
+        "merchantCategory": "RETAIL",
+        "channel": "CARD_PRESENT"
+      }
+    }
+  }
+}

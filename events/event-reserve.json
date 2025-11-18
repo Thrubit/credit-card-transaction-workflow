@@ -1,0 +1,6 @@
+{
+  "accountId": "ACC-123456",
+  "amount": 1200,
+  "currency": "USD",
+  "transactionId": "TX-10001"
+}

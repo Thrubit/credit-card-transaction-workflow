@@ -1,0 +1,8 @@
+{
+  "reason": "FRAUD_SUSPECTED",
+  "transaction": {
+    "transactionId": "TX-10001",
+    "amount": 1200,
+    "currency": "USD"
+  }
+}

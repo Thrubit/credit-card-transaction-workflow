@@ -1,0 +1,14 @@
+{
+  "transaction": {
+    "transactionId": "TX-10001",
+    "amount": 1200,
+    "currency": "USD",
+    "accountId": "ACC-123456"
+  },
+  "reservation": {
+    "reservationId": "RES-TX-10001",
+    "accountId": "ACC-123456",
+    "amount": 1200,
+    "currency": "USD"
+  }
+}

@@ -1,0 +1,66 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Thrubit Credit Card Transaction Workflow Sample
+
+Resources:
+  ValidateTransactionFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: lambdas/
+      Handler: validate-transaction.handler
+      Runtime: nodejs18.x
+      Timeout: 10
+
+  EnrichTransactionFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: lambdas/
+      Handler: enrich-transaction.handler
+      Runtime: nodejs18.x
+      Timeout: 10
+
+  FraudCheckFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: lambdas/
+      Handler: fraud-check.handler
+      Runtime: nodejs18.x
+      Timeout: 10
+
+  BalanceCheckFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: lambdas/
+      Handler: balance-check.handler
+      Runtime: nodejs18.x
+      Timeout: 10
+
+  ReserveFundsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: lambdas/
+      Handler: reserve-funds.handler
+      Runtime: nodejs18.x
+      Timeout: 10
+
+  PostTransactionFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: lambdas/
+      Handler: post-transaction.handler
+      Runtime: nodejs18.x
+      Timeout: 10
+
+  RejectTransactionFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: lambdas/
+      Handler: reject-transaction.handler
+      Runtime: nodejs18.x
+      Timeout: 10
+
+  CreditCardTransactionProcessing:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Name: CreditCardTransactionProcessing
+      DefinitionUri: statemachines/credit-card-transaction.asl.json

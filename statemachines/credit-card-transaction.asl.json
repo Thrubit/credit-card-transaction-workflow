@@ -1,0 +1,247 @@
+{
+  "Comment": "Credit card transaction processing workflow",
+  "StartAt": "ValidateInput",
+  "States": {
+    "ValidateInput": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${ValidateTransactionFunctionArn}",
+        "Payload.$": "$"
+      },
+      "ResultPath": "$.validation",
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.error",
+          "Next": "ValidationError"
+        }
+      ],
+      "Next": "IsValid"
+    },
+    "IsValid": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.validation.Payload.isValid",
+          "BooleanEquals": true,
+          "Next": "EnrichTransaction"
+        }
+      ],
+      "Default": "ValidationError"
+    },
+    "ValidationError": {
+      "Type": "Fail",
+      "Error": "InvalidTransaction",
+      "Cause": "Incoming transaction failed validation"
+    },
+    "EnrichTransaction": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${EnrichTransactionFunctionArn}",
+        "Payload.$": "$"
+      },
+      "ResultPath": "$.enriched",
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 2,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.error",
+          "Next": "EnrichmentError"
+        }
+      ],
+      "Next": "FraudCheck"
+    },
+    "EnrichmentError": {
+      "Type": "Fail",
+      "Error": "EnrichmentFailed",
+      "Cause": "Could not enrich transaction data"
+    },
+    "FraudCheck": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${FraudCheckFunctionArn}",
+        "Payload.$": "$.enriched.Payload"
+      },
+      "ResultPath": "$.fraud",
+      "TimeoutSeconds": 10,
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.error",
+          "Next": "FraudError"
+        }
+      ],
+      "Next": "IsNotFraudulent"
+    },
+    "FraudError": {
+      "Type": "Fail",
+      "Error": "FraudCheckFailed",
+      "Cause": "Fraud engine failure"
+    },
+    "IsNotFraudulent": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.fraud.Payload.isFraudulent",
+          "BooleanEquals": false,
+          "Next": "BalanceCheck"
+        }
+      ],
+      "Default": "RejectTransactionFraud"
+    },
+    "RejectTransactionFraud": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${RejectTransactionFunctionArn}",
+        "Payload": {
+          "reason": "FRAUD_SUSPECTED",
+          "transaction.$": "$"
+        }
+      },
+      "ResultPath": "$.rejection",
+      "End": true
+    },
+    "BalanceCheck": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${BalanceCheckFunctionArn}",
+        "Payload": {
+          "accountId.$": "$.enriched.Payload.accountId",
+          "amount.$": "$.enriched.Payload.amount",
+          "currency.$": "$.enriched.Payload.currency"
+        }
+      },
+      "ResultPath": "$.balance",
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.error",
+          "Next": "BalanceError"
+        }
+      ],
+      "Next": "HasSufficientFunds"
+    },
+    "BalanceError": {
+      "Type": "Fail",
+      "Error": "BalanceCheckFailed",
+      "Cause": "Unable to check account balance"
+    },
+    "HasSufficientFunds": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.balance.Payload.hasSufficientFunds",
+          "BooleanEquals": true,
+          "Next": "ReserveFunds"
+        }
+      ],
+      "Default": "RejectTransactionInsufficientFunds"
+    },
+    "RejectTransactionInsufficientFunds": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${RejectTransactionFunctionArn}",
+        "Payload": {
+          "reason": "INSUFFICIENT_FUNDS",
+          "transaction.$": "$"
+        }
+      },
+      "ResultPath": "$.rejection",
+      "End": true
+    },
+    "ReserveFunds": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${ReserveFundsFunctionArn}",
+        "Payload": {
+          "accountId.$": "$.enriched.Payload.accountId",
+          "amount.$": "$.enriched.Payload.amount",
+          "currency.$": "$.enriched.Payload.currency",
+          "transactionId.$": "$.enriched.Payload.transactionId"
+        }
+      },
+      "ResultPath": "$.reservation",
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.error",
+          "Next": "ReservationError"
+        }
+      ],
+      "Next": "PostTransaction"
+    },
+    "ReservationError": {
+      "Type": "Fail",
+      "Error": "ReservationFailed",
+      "Cause": "Unable to reserve funds for transaction"
+    },
+    "PostTransaction": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${PostTransactionFunctionArn}",
+        "Payload": {
+          "transaction.$": "$.enriched.Payload",
+          "reservation.$": "$.reservation.Payload"
+        }
+      },
+      "ResultPath": "$.posting",
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.error",
+          "Next": "PostingError"
+        }
+      ],
+      "Next": "Success"
+    },
+    "PostingError": {
+      "Type": "Fail",
+      "Error": "PostingFailed",
+      "Cause": "Failed to post transaction to ledger"
+    },
+    "Success": {
+      "Type": "Succeed"
+    }
+  }
+}
