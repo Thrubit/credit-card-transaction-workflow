@@ -7,9 +7,18 @@ exports.handler = async (event) => {
   };
 
   const availableBalance =
-    mockBalances[accountId] !== undefined ? mockBalances[accountId] : 2000;
+    mockBalances[accountId] !== undefined ? mockBalances[accountId] : 10000;
 
   const hasSufficientFunds = availableBalance >= amount;
+
+  await new Promise((resolve) => {
+    setTimeout(() => {
+      console.log(
+        `Balance check for account ${accountId}: Available balance is ${availableBalance} ${currency}, requested amount is ${amount} ${currency}, sufficient funds: ${hasSufficientFunds}`
+      );
+      resolve();
+    }, 2000);
+  });
 
   return {
     accountId,

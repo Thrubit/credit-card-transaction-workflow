@@ -1,0 +1,104 @@
+{
+  "Comment": "Express authorization — 7 states covering Pass, Task, Choice, Wait, Succeed, and Fail.",
+  "StartAt": "SetRequestMeta",
+  "States": {
+
+    "SetRequestMeta": {
+      "Type": "Pass",
+      "Parameters": {
+        "transactionId.$": "$.transactionId",
+        "amount.$": "$.amount",
+        "currency.$": "$.currency",
+        "accountId.$": "$.accountId",
+        "authorizationId.$": "$$.Execution.Id",
+        "channel": "EXPRESS"
+      },
+      "Next": "FraudScreen"
+    },
+
+    "FraudScreen": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${FraudCheckFunctionArn}",
+        "Payload.$": "$"
+      },
+      "ResultPath": "$.fraud",
+      "Retry": [
+        {
+          "ErrorEquals": ["Lambda.ServiceException", "Lambda.AWSLambdaException"],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 2,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "AuthorizationFailed"
+        }
+      ],
+      "Next": "IsFraudulent"
+    },
+
+    "IsFraudulent": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.fraud.Payload.isFraudulent",
+          "BooleanEquals": false,
+          "Next": "ReserveFunds"
+        }
+      ],
+      "Default": "FraudBlocked"
+    },
+
+    "ReserveFunds": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${ReserveFundsFunctionArn}",
+        "Payload": {
+          "accountId.$": "$.accountId",
+          "amount.$": "$.amount",
+          "currency.$": "$.currency",
+          "transactionId.$": "$.transactionId"
+        }
+      },
+      "ResultPath": "$.reservation",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "AuthorizationFailed"
+        }
+      ],
+      "Next": "SettlementDelay"
+    },
+
+    "SettlementDelay": {
+      "Type": "Wait",
+      "Comment": "Brief hold while the authorization propagates to downstream settlement systems.",
+      "Seconds": 2,
+      "Next": "Authorized"
+    },
+
+    "Authorized": {
+      "Type": "Succeed"
+    },
+
+    "FraudBlocked": {
+      "Type": "Fail",
+      "Error": "FraudDetected",
+      "Cause": "Transaction blocked by fraud screening"
+    },
+
+    "AuthorizationFailed": {
+      "Type": "Fail",
+      "Error": "AuthorizationError",
+      "Cause": "Authorization could not be completed"
+    }
+
+  }
+}

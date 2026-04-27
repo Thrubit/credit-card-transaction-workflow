@@ -1,0 +1,280 @@
+{
+  "Comment": "Batch credit card processing: iterates over multiple transactions concurrently (Map), and within each transaction runs fraud and balance checks simultaneously (Parallel) before authorizing or rejecting.",
+  "StartAt": "ProcessTransactionBatch",
+  "States": {
+    "ProcessTransactionBatch": {
+      "Type": "Map",
+      "Comment": "Process each transaction in the batch concurrently, up to 3 at a time.",
+      "ItemsPath": "$.transactions",
+      "MaxConcurrency": 3,
+      "ItemProcessor": {
+        "ProcessorConfig": {
+          "Mode": "INLINE"
+        },
+        "StartAt": "ValidateItem",
+        "States": {
+          "ValidateItem": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::lambda:invoke",
+            "Parameters": {
+              "FunctionName": "${ValidateTransactionFunctionArn}",
+              "Payload.$": "$"
+            },
+            "ResultPath": "$.validation",
+            "Retry": [
+              {
+                "ErrorEquals": [
+                  "Lambda.ServiceException",
+                  "Lambda.AWSLambdaException",
+                  "Lambda.SdkClientException"
+                ],
+                "IntervalSeconds": 2,
+                "MaxAttempts": 2,
+                "BackoffRate": 2.0
+              }
+            ],
+            "Catch": [
+              {
+                "ErrorEquals": ["States.ALL"],
+                "ResultPath": "$.error",
+                "Next": "ItemValidationError"
+              }
+            ],
+            "Next": "IsItemValid"
+          },
+          "IsItemValid": {
+            "Type": "Choice",
+            "Choices": [
+              {
+                "Variable": "$.validation.Payload.isValid",
+                "BooleanEquals": true,
+                "Next": "EnrichItem"
+              }
+            ],
+            "Default": "RejectInvalidItem"
+          },
+          "RejectInvalidItem": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::lambda:invoke",
+            "Parameters": {
+              "FunctionName": "${RejectTransactionFunctionArn}",
+              "Payload": {
+                "reason": "INVALID_TRANSACTION",
+                "transaction.$": "$"
+              }
+            },
+            "ResultPath": "$.rejection",
+            "End": true
+          },
+          "ItemValidationError": {
+            "Type": "Fail",
+            "Error": "ValidationError",
+            "Cause": "Transaction validation lambda failed unexpectedly"
+          },
+          "EnrichItem": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::lambda:invoke",
+            "Parameters": {
+              "FunctionName": "${EnrichTransactionFunctionArn}",
+              "Payload.$": "$"
+            },
+            "ResultPath": "$.enriched",
+            "Retry": [
+              {
+                "ErrorEquals": ["States.ALL"],
+                "IntervalSeconds": 2,
+                "MaxAttempts": 2,
+                "BackoffRate": 2.0
+              }
+            ],
+            "Catch": [
+              {
+                "ErrorEquals": ["States.ALL"],
+                "ResultPath": "$.error",
+                "Next": "ItemEnrichmentError"
+              }
+            ],
+            "Next": "ParallelRiskScreening"
+          },
+          "ItemEnrichmentError": {
+            "Type": "Fail",
+            "Error": "EnrichmentError",
+            "Cause": "Transaction enrichment lambda failed"
+          },
+          "ParallelRiskScreening": {
+            "Type": "Parallel",
+            "Comment": "Run fraud detection and balance check simultaneously to minimize latency.",
+            "Branches": [
+              {
+                "StartAt": "FraudCheck",
+                "States": {
+                  "FraudCheck": {
+                    "Type": "Task",
+                    "Resource": "arn:aws:states:::lambda:invoke",
+                    "Parameters": {
+                      "FunctionName": "${FraudCheckFunctionArn}",
+                      "Payload.$": "$.enriched.Payload"
+                    },
+                    "ResultPath": "$.fraudResult",
+                    "TimeoutSeconds": 10,
+                    "Catch": [
+                      {
+                        "ErrorEquals": ["States.ALL"],
+                        "ResultPath": "$.error",
+                        "Next": "FraudCheckError"
+                      }
+                    ],
+                    "End": true
+                  },
+                  "FraudCheckError": {
+                    "Type": "Fail",
+                    "Error": "FraudCheckFailed",
+                    "Cause": "Fraud detection service unavailable"
+                  }
+                }
+              },
+              {
+                "StartAt": "BalanceCheck",
+                "States": {
+                  "BalanceCheck": {
+                    "Type": "Task",
+                    "Resource": "arn:aws:states:::lambda:invoke",
+                    "Parameters": {
+                      "FunctionName": "${BalanceCheckFunctionArn}",
+                      "Payload": {
+                        "accountId.$": "$.enriched.Payload.accountId",
+                        "amount.$": "$.enriched.Payload.amount",
+                        "currency.$": "$.enriched.Payload.currency"
+                      }
+                    },
+                    "ResultPath": "$.balanceResult",
+                    "Catch": [
+                      {
+                        "ErrorEquals": ["States.ALL"],
+                        "ResultPath": "$.error",
+                        "Next": "BalanceCheckError"
+                      }
+                    ],
+                    "End": true
+                  },
+                  "BalanceCheckError": {
+                    "Type": "Fail",
+                    "Error": "BalanceCheckFailed",
+                    "Cause": "Balance check service unavailable"
+                  }
+                }
+              }
+            ],
+            "ResultPath": "$.screening",
+            "Catch": [
+              {
+                "ErrorEquals": ["States.ALL"],
+                "ResultPath": "$.error",
+                "Next": "RiskScreeningError"
+              }
+            ],
+            "Next": "EvaluateRisk"
+          },
+          "RiskScreeningError": {
+            "Type": "Fail",
+            "Error": "RiskScreeningFailed",
+            "Cause": "One or more risk screening checks could not be completed"
+          },
+          "EvaluateRisk": {
+            "Type": "Choice",
+            "Comment": "Both fraud check must pass (not fraudulent) AND balance check must pass (sufficient funds).",
+            "Choices": [
+              {
+                "And": [
+                  {
+                    "Variable": "$.screening[0].fraudResult.Payload.isFraudulent",
+                    "BooleanEquals": false
+                  },
+                  {
+                    "Variable": "$.screening[1].balanceResult.Payload.hasSufficientFunds",
+                    "BooleanEquals": true
+                  }
+                ],
+                "Next": "ReserveFunds"
+              }
+            ],
+            "Default": "RejectRiskFailed"
+          },
+          "RejectRiskFailed": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::lambda:invoke",
+            "Parameters": {
+              "FunctionName": "${RejectTransactionFunctionArn}",
+              "Payload": {
+                "reason": "RISK_SCREENING_FAILED",
+                "transaction.$": "$.enriched.Payload"
+              }
+            },
+            "ResultPath": "$.rejection",
+            "End": true
+          },
+          "ReserveFunds": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::lambda:invoke",
+            "Parameters": {
+              "FunctionName": "${ReserveFundsFunction}",
+              "Payload": {
+                "accountId.$": "$.enriched.Payload.accountId",
+                "amount.$": "$.enriched.Payload.amount",
+                "currency.$": "$.enriched.Payload.currency",
+                "transactionId.$": "$.enriched.Payload.transactionId"
+              }
+            },
+            "ResultPath": "$.reservation",
+            "Catch": [
+              {
+                "ErrorEquals": ["States.ALL"],
+                "ResultPath": "$.error",
+                "Next": "ReservationError"
+              }
+            ],
+            "Next": "PostTransaction"
+          },
+          "ReservationError": {
+            "Type": "Fail",
+            "Error": "ReservationFailed",
+            "Cause": "Unable to reserve funds for transaction"
+          },
+          "PostTransaction": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::lambda:invoke",
+            "Parameters": {
+              "FunctionName": "${PostTransactionFunctionArn}",
+              "Payload": {
+                "transaction.$": "$.enriched.Payload",
+                "reservation.$": "$.reservation.Payload"
+              }
+            },
+            "ResultPath": "$.posting",
+            "Catch": [
+              {
+                "ErrorEquals": ["States.ALL"],
+                "ResultPath": "$.error",
+                "Next": "PostingError"
+              }
+            ],
+            "Next": "ItemAuthorized"
+          },
+          "PostingError": {
+            "Type": "Fail",
+            "Error": "PostingFailed",
+            "Cause": "Failed to post transaction to ledger"
+          },
+          "ItemAuthorized": {
+            "Type": "Succeed"
+          }
+        }
+      },
+      "ResultPath": "$.results",
+      "Next": "BatchComplete"
+    },
+    "BatchComplete": {
+      "Type": "Succeed"
+    }
+  }
+}

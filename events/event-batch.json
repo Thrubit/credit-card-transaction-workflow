@@ -1,0 +1,35 @@
+{
+  "transactions": [
+    {
+      "transactionId": "TX-10001",
+      "amount": 1200,
+      "currency": "USD",
+      "cardNumber": "4111111111111111",
+      "merchantId": "M-98765",
+      "merchantCategory": "RETAIL",
+      "channel": "CARD_PRESENT",
+      "timestamp": "2025-11-14T10:00:00Z"
+    },
+    {
+      "transactionId": "TX-10002",
+      "amount": 6500,
+      "currency": "USD",
+      "cardNumber": "4111111111111112",
+      "merchantId": "M-11111",
+      "merchantCategory": "CRYPTO_EXCHANGE",
+      "channel": "CARD_NOT_PRESENT",
+      "timestamp": "2025-11-14T10:01:00Z"
+    },
+    {
+      "transactionId": "TX-10003",
+      "amount": 75,
+      "currency": "USD",
+      "cardNumber": "4111111111111113",
+      "merchantId": "M-22222",
+      "merchantCategory": "GROCERY",
+      "channel": "CARD_PRESENT",
+      "accountId": "ACC-LOWFUNDS",
+      "timestamp": "2025-11-14T10:02:00Z"
+    }
+  ]
+}

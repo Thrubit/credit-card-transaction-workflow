@@ -19,5 +19,12 @@ exports.handler = async (event) => {
     riskSegment: "STANDARD"
   };
 
+  await new Promise((resolve) => {
+    setTimeout(() => {
+      console.log("Enriched transaction:", enriched);
+      resolve();
+    }, 2000);
+  });
+
   return enriched;
 };

@@ -1,0 +1,188 @@
+{
+  "Comment": "Transaction reversal workflow — demonstrates Pass, Task, Choice, Wait, Parallel, Map, Succeed, and Fail states.",
+  "StartAt": "SetReversalDefaults",
+  "States": {
+
+    "SetReversalDefaults": {
+      "Type": "Pass",
+      "Comment": "Stamp a reversalId and initial status onto the input without invoking a Lambda.",
+      "Parameters": {
+        "transactionId.$": "$.transactionId",
+        "amount.$": "$.amount",
+        "currency.$": "$.currency",
+        "accountId.$": "$.accountId",
+        "reason.$": "$.reason",
+        "reversalId.$": "$$.Execution.Id",
+        "reversalStatus": "PENDING"
+      },
+      "Next": "ValidateReversal"
+    },
+
+    "ValidateReversal": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${ValidateTransactionFunctionArn}",
+        "Payload.$": "$"
+      },
+      "ResultPath": "$.validation",
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "ReversalFailed"
+        }
+      ],
+      "Next": "IsReversalEligible"
+    },
+
+    "IsReversalEligible": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.validation.Payload.isValid",
+          "BooleanEquals": true,
+          "Next": "CoolingOffPeriod"
+        }
+      ],
+      "Default": "RejectReversal"
+    },
+
+    "CoolingOffPeriod": {
+      "Type": "Wait",
+      "Comment": "Brief hold to allow any in-flight settlement operations to complete.",
+      "Seconds": 3,
+      "Next": "RiskAndBalanceScreening"
+    },
+
+    "RiskAndBalanceScreening": {
+      "Type": "Parallel",
+      "Comment": "Run fraud and balance checks concurrently to minimise latency.",
+      "Branches": [
+        {
+          "StartAt": "FraudScreen",
+          "States": {
+            "FraudScreen": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Parameters": {
+                "FunctionName": "${FraudCheckFunctionArn}",
+                "Payload.$": "$"
+              },
+              "End": true
+            }
+          }
+        },
+        {
+          "StartAt": "BalanceScreen",
+          "States": {
+            "BalanceScreen": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Parameters": {
+                "FunctionName": "${BalanceCheckFunctionArn}",
+                "Payload": {
+                  "accountId.$": "$.accountId",
+                  "amount.$": "$.amount",
+                  "currency.$": "$.currency"
+                }
+              },
+              "End": true
+            }
+          }
+        }
+      ],
+      "ResultPath": "$.screening",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "ReversalFailed"
+        }
+      ],
+      "Next": "ApplyReversalEntries"
+    },
+
+    "ApplyReversalEntries": {
+      "Type": "Map",
+      "Comment": "Post a credit entry for each affected ledger line (supports split transactions).",
+      "ItemsPath": "$.ledgerEntries",
+      "MaxConcurrency": 2,
+      "ItemProcessor": {
+        "ProcessorConfig": {
+          "Mode": "INLINE"
+        },
+        "StartAt": "PostEntry",
+        "States": {
+          "PostEntry": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::lambda:invoke",
+            "Parameters": {
+              "FunctionName": "${PostTransactionFunctionArn}",
+              "Payload.$": "$"
+            },
+            "Catch": [
+              {
+                "ErrorEquals": ["States.ALL"],
+                "ResultPath": "$.error",
+                "Next": "EntryFailed"
+              }
+            ],
+            "End": true
+          },
+          "EntryFailed": {
+            "Type": "Fail",
+            "Error": "LedgerPostFailed",
+            "Cause": "A ledger entry could not be posted during reversal"
+          }
+        }
+      },
+      "ResultPath": "$.postedEntries",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "ReversalFailed"
+        }
+      ],
+      "Next": "ReversalComplete"
+    },
+
+    "ReversalComplete": {
+      "Type": "Succeed"
+    },
+
+    "RejectReversal": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${RejectTransactionFunctionArn}",
+        "Payload": {
+          "reason": "REVERSAL_INELIGIBLE",
+          "transaction.$": "$"
+        }
+      },
+      "ResultPath": "$.rejection",
+      "End": true
+    },
+
+    "ReversalFailed": {
+      "Type": "Fail",
+      "Error": "ReversalError",
+      "Cause": "Transaction reversal could not be completed"
+    }
+
+  }
+}

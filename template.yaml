@@ -63,4 +63,26 @@ Resources:
     Type: AWS::Serverless::StateMachine
     Properties:
       Name: CreditCardTransactionProcessing
+      Description: This workflow models a complete end to end credit card transaction pipeline using AWS Step Functions. It includes input validation, data enrichment, fraud analysis, balance checks, fund reservation, and final ledger posting.
       DefinitionUri: statemachines/credit-card-transaction.asl.json
+
+  CreditCardBatchProcessing:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Name: CreditCardBatchProcessing
+      Description: This workflow processes an array of credit card transactions concurrently using a Map state, with a maximum concurrency of 3. Each item in the batch is independently validated, enriched, and screened for fraud and balance eligibility in parallel branches before being authorized or rejected.
+      DefinitionUri: statemachines/credit-card-batch-processing.asl.json
+
+  TransactionReversal:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Name: TransactionReversal
+      Description: This workflow handles the end-to-end reversal of a previously processed credit card transaction. It validates reversal eligibility, enforces a short cooling-off Wait period to allow in-flight settlements to complete, then runs concurrent fraud and balance checks using a Parallel state before restoring funds or failing the reversal with a structured error.
+      DefinitionUri: statemachines/transaction-reversal.asl.json
+
+  ExpressAuthorization:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Name: ExpressAuthorization
+      Description: This workflow provides a low-latency express authorization path for time-sensitive card transactions. It runs a fraud screen immediately on the incoming request and, if cleared, reserves funds and applies a brief Wait to allow the authorization to propagate to downstream settlement systems before completing with a Succeed or Fail terminal state.
+      DefinitionUri: statemachines/express-authorization.asl.json

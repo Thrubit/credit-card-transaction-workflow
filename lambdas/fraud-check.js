@@ -17,6 +17,15 @@ exports.handler = async (event) => {
 
   const isFraudulent = score >= 70;
 
+  await new Promise((resolve) => {
+    setTimeout(() => {
+      console.log(
+        `Fraud check for transaction ${tx.transactionId}: Risk score is ${score}, fraudulent: ${isFraudulent}`
+      );
+      resolve();
+    }, 2000);
+  });
+
   return {
     isFraudulent,
     score,
